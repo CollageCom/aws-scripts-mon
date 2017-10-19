@@ -612,38 +612,49 @@ if ($report_disk_space && ($report_inode_util || $report_inode_used || $report_i
 }
 
 # send metrics over to CloudWatch if any
-
 if ($mcount > 0)
 {
-  my %opts = ();
-  $opts{'aws-credential-file'} = $aws_credential_file;
-  $opts{'aws-access-key-id'} = $aws_access_key_id;
-  $opts{'aws-secret-key'} = $aws_secret_key;
-  $opts{'retries'} = 2;
-  $opts{'verbose'} = $verbose;
-  $opts{'verify'} = $verify;
-  $opts{'user-agent'} = "$client_name/$version";
-  $opts{'enable_compression'} = 1 if ($enable_compression);
-  $opts{'aws-iam-role'} = $aws_iam_role;
+  # break up metrics into sets of 20
+  my @metrics = @{$input_ref->{'MetricData'}};
 
-  my $response = CloudWatchClient::call_json('PutMetricData', \%params, \%opts);
-  my $code = $response->code;
-  my $message = $response->message;
+  my @metric_sets;
+  push @metric_sets, [ splice @metrics, 0, 20 ] while @metrics;
 
-  if ($code == 200 && !$from_cron) {
+  foreach my $cur_metrics (@metric_sets)
+  {
+    my %opts = ();
+    $opts{'aws-credential-file'} = $aws_credential_file;
+    $opts{'aws-access-key-id'} = $aws_access_key_id;
+    $opts{'aws-secret-key'} = $aws_secret_key;
+    $opts{'retries'} = 2;
+    $opts{'verbose'} = $verbose;
+    $opts{'verify'} = $verify;
+    $opts{'user-agent'} = "$client_name/$version";
+    $opts{'enable_compression'} = 1 if ($enable_compression);
+    $opts{'aws-iam-role'} = $aws_iam_role;
+
+    $input_ref->{'MetricData'} = $cur_metrics;
+
+    my $response = CloudWatchClient::call_json('PutMetricData', \%params, \%opts);
+    my $code = $response->code;
+    my $message = $response->message;
+
+    if ($code == 200 && !$from_cron) {
     if ($verify) {
       print "\nVerification completed successfully. No actual metrics sent to CloudWatch.\n\n";
     } else {
       my $request_id = $response->headers->{'x-amzn-requestid'};
       print "\nSuccessfully reported metrics to CloudWatch. Reference Id: $request_id\n\n";
     }
-  }
-  elsif ($code < 100) {
+    }
+    elsif ($code < 100) {
     exit_with_error($message);
-  }
-  elsif ($code != 200) {
+    }
+    elsif ($code != 200) {
     exit_with_error("Failed to call CloudWatch: HTTP $code. Message: $message");
+    }
   }
+
 }
 else {
   exit_with_error("No metrics prepared for submission to CloudWatch.");
